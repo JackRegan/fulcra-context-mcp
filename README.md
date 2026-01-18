@@ -109,17 +109,34 @@ uv run python -m fulcra_mcp.main
 npx @modelcontextprotocol/inspector uv run --directory /path/to/fulcra-context-mcp python -m fulcra_mcp.main
 ```
 
-## Planned Enhancements
+## Development Roadmap
 
-This fork includes planned enhancements:
+This fork is actively being developed to transform from a simple API wrapper into a **personal health data warehouse**.
 
-- **Local Caching**: SQLite-based caching of API responses for:
-  - Faster query responses
-  - Reduced API calls
-  - Offline access to historical data
-  - Better privacy (data stored locally)
+**Planned Features:**
 
-- **Extended Metrics**: Additional data processing and aggregation
+- **Personal Health Database**: SQLite-based permanent storage for:
+  - Immutable health data (fetch once, store forever)
+  - Smart gap detection (only fetch missing data)
+  - Offline access to all historical data
+  - Fast local queries (100x faster than API)
+  - Export capabilities (CSV, JSON)
+  - Better privacy (data stays local)
+
+- **Robust Error Handling**:
+  - Chunked requests for large date ranges
+  - Automatic retry with exponential backoff
+  - Authentication token refresh
+  - Progress tracking and resume capability
+  - User-friendly error messages
+
+- **Advanced Features**:
+  - Data export for analysis tools (Pandas, R, Excel)
+  - Database management tools
+  - Query optimization
+  - Extended metrics and aggregations
+
+**See [CLAUDE.md](./CLAUDE.md) for the complete implementation plan.**
 
 ## Example Usage
 

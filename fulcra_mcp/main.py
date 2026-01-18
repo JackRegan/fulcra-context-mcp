@@ -1,9 +1,11 @@
+import asyncio
 import json
 import logging
 import secrets
 import sys
 import time
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 import structlog
@@ -26,6 +28,9 @@ from mcp.server.session import ServerSession
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings
+
+from .health_db import get_health_db
+from .smart_fetch import get_smart_fetcher
 
 OIDC_SCOPES = ["openid", "profile", "name", "email"]
 
@@ -303,23 +308,43 @@ async def get_workouts(start_time: datetime, end_time: datetime) -> str:
     Result timestamps will include time zones. Always translate timestamps to the user's local
     time zone when this is known.
 
+    Uses local health database for fast access when data is available.
+
     Args:
         start_time: The starting time of the period. Must include tz (ISO8601).
         end_time: the ending time of the period. Must include tz (ISO8601).
     """
     fulcra = get_fulcra_object()
-    workouts = fulcra.apple_workouts(start_time, end_time)
-    return f"Workouts during {start_time} and {end_time}: " + json.dumps(workouts)
+    fetcher = get_smart_fetcher()
+
+    result = await fetcher.get_workouts(
+        fulcra_fetch_func=fulcra.apple_workouts,
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    cache_note = " (from local database)" if result.from_cache else ""
+    return f"Workouts during {start_time} and {end_time}{cache_note}: " + json.dumps(result.data)
 
 
 @mcp.tool()
 async def get_metrics_catalog() -> str:
     """Get the catalog of available metrics that can be used in time-series API calls
     (`metric_time_series` and `metric_samples`).
+
+    Results are cached locally for fast repeated access.
     """
     fulcra = get_fulcra_object()
-    catalog = fulcra.metrics_catalog()
-    return "Available metrics: " + json.dumps(catalog)
+    fetcher = get_smart_fetcher()
+
+    result = await fetcher.get_cached_metadata(
+        key="metrics_catalog",
+        fulcra_fetch_func=fulcra.metrics_catalog,
+        max_age=86400,  # Cache for 24 hours
+    )
+
+    cache_note = " (cached)" if result.from_cache else ""
+    return f"Available metrics{cache_note}: " + json.dumps(result.data)
 
 
 @mcp.tool()
@@ -337,6 +362,8 @@ async def get_metric_time_series(
     Result timestamps will include tz. Always translate timestamps to the user's local
     tz when this is known.
 
+    Uses local health database for fast access. Only fetches from API for data gaps.
+
     Args:
         metric_name: The name of the time-series metric to retrieve. Use `get_metrics_catalog` to find available metrics.
         start_time: The starting time period (inclusive). Must include tz (ISO8601).
@@ -350,6 +377,8 @@ async def get_metric_time_series(
         For time ranges where data is missing, the values will be NA unless replace_nulls is true.
     """
     fulcra = get_fulcra_object()
+    fetcher = get_smart_fetcher()
+
     # Ensure defaults are passed correctly if None
     kwargs = {}
     if sample_rate is not None:
@@ -359,18 +388,28 @@ async def get_metric_time_series(
     if calculations is not None:
         kwargs["calculations"] = calculations
 
-    time_series_df = fulcra.metric_time_series(
-        metric=metric_name,
+    result = await fetcher.get_metric_time_series(
+        fulcra_fetch_func=fulcra.metric_time_series,
+        metric_name=metric_name,
         start_time=start_time,
         end_time=end_time,
         **kwargs,
     )
-    return (
-        f"Time series data for {metric_name} from {start_time} to {end_time}: "
-        + time_series_df.to_json(
-            orient="records", date_format="iso", default_handler=str
-        )
-    )
+
+    # Format the result
+    cache_info = ""
+    if result.from_cache:
+        cache_info = " (from local database)"
+    elif result.gaps_fetched > 0:
+        cache_info = f" ({result.records_from_cache} from cache, {result.records_fetched} fetched)"
+
+    # Handle both list and DataFrame results
+    if hasattr(result.data, "to_json"):
+        data_json = result.data.to_json(orient="records", date_format="iso", default_handler=str)
+    else:
+        data_json = json.dumps(result.data)
+
+    return f"Time series data for {metric_name} from {start_time} to {end_time}{cache_info}: " + data_json
 
 
 @mcp.tool()
@@ -422,6 +461,8 @@ async def get_sleep_cycles(
     Result timestamps will include time zones. Always translate timestamps to the user's local
     time zone when this is known.
 
+    Uses local health database for fast access when data is available.
+
     Args:
         start_time: The starting timestamp (inclusive), as an ISO 8601 string or datetime object.
         end_time: The ending timestamp (exclusive), as an ISO 8601 string or datetime object.
@@ -435,6 +476,8 @@ async def get_sleep_cycles(
         A JSON string representing a pandas DataFrame containing the sleep cycle data.
     """
     fulcra = get_fulcra_object()
+    fetcher = get_smart_fetcher()
+
     kwargs = {}
     if cycle_gap is not None:
         kwargs["cycle_gap"] = cycle_gap
@@ -445,16 +488,22 @@ async def get_sleep_cycles(
     if clip_to_range is not None:
         kwargs["clip_to_range"] = clip_to_range
 
-    sleep_cycles_df = fulcra.sleep_cycles(
+    result = await fetcher.get_sleep_cycles(
+        fulcra_fetch_func=fulcra.sleep_cycles,
         start_time=start_time,
         end_time=end_time,
         **kwargs,
     )
-    # Convert DataFrame to JSON. `orient='records'` gives a list of dicts.
-    # `date_format='iso'` ensures datetimes are ISO8601 strings.
-    return f"Sleep cycles from {start_time} to {end_time}: " + sleep_cycles_df.to_json(
-        orient="records", date_format="iso", default_handler=str
-    )
+
+    cache_note = " (from local database)" if result.from_cache else ""
+
+    # Handle both list and DataFrame results
+    if hasattr(result.data, "to_json"):
+        data_json = result.data.to_json(orient="records", date_format="iso", default_handler=str)
+    else:
+        data_json = json.dumps(result.data)
+
+    return f"Sleep cycles from {start_time} to {end_time}{cache_note}: " + data_json
 
 
 @mcp.tool()
@@ -471,6 +520,8 @@ async def get_location_at_time(
     Result timestamps will include time zones. Always translate timestamps to the user's local
     time zone when this is known.
 
+    Uses local health database for fast access when data is available.
+
     Args:
         time: The point in time to get the user's location for. Must include tz (ISO8601).
         window_size: Optional. The size (in seconds) to look back (and optionally forward) for samples. Defaults to 14400.
@@ -479,17 +530,23 @@ async def get_location_at_time(
         A JSON string representing the location data.
     """
     fulcra = get_fulcra_object()
+    fetcher = get_smart_fetcher()
+
     kwargs = {}
     if window_size is not None:
         kwargs["window_size"] = window_size
     kwargs["include_after"] = True
     kwargs["reverse_geocode"] = True
 
-    location_data = fulcra.location_at_time(
-        time=time,
+    result = await fetcher.get_location_at_time(
+        fulcra_fetch_func=fulcra.location_at_time,
+        target_time=time,
+        window_size=window_size,
         **kwargs,
     )
-    return f"Location info at {time}: " + json.dumps(location_data)
+
+    cache_note = " (from local database)" if result.from_cache else ""
+    return f"Location info at {time}{cache_note}: " + json.dumps(result.data)
 
 
 @mcp.tool()
@@ -503,6 +560,8 @@ async def get_location_time_series(
     """Retrieve a time series of locations that the user was at.
     Result timestamps will include time zones. Always translate timestamps to the user's local tz when this is known.
 
+    Uses local health database for fast access when data is available.
+
     Args:
         start_time: The start of the time range (inclusive), as an ISO 8601 string or datetime object.
         end_time: The end of the range (exclusive), as an ISO 8601 string or datetime object.
@@ -513,6 +572,8 @@ async def get_location_time_series(
         A JSON string representing a list of location data points.
     """
     fulcra = get_fulcra_object()
+    fetcher = get_smart_fetcher()
+
     kwargs = {}
     if change_meters is not None:
         kwargs["change_meters"] = change_meters
@@ -522,14 +583,15 @@ async def get_location_time_series(
     if reverse_geocode is not None:
         kwargs["reverse_geocode"] = reverse_geocode
 
-    location_series = fulcra.location_time_series(
+    result = await fetcher.get_location_time_series(
+        fulcra_fetch_func=fulcra.location_time_series,
         start_time=start_time,
         end_time=end_time,
         **kwargs,
     )
-    return f"Location time series from {start_time} to {end_time}: " + json.dumps(
-        location_series
-    )
+
+    cache_note = " (from local database)" if result.from_cache else ""
+    return f"Location time series from {start_time} to {end_time}{cache_note}: " + json.dumps(result.data)
 
 
 @mcp.tool()
@@ -537,10 +599,173 @@ async def get_user_info() -> str:
     """Return general info about the Context by Fulcra user.
 
     Returns user references such as time zone, calendar ids, and other metadata.
+    Results are cached locally for fast repeated access.
     """
     fulcra = get_fulcra_object()
-    user_info = fulcra.get_user_info()
-    return "User information: " + json.dumps(user_info)
+    fetcher = get_smart_fetcher()
+
+    result = await fetcher.get_cached_metadata(
+        key="user_info",
+        fulcra_fetch_func=fulcra.get_user_info,
+        max_age=86400,  # Cache for 24 hours
+    )
+
+    cache_note = " (cached)" if result.from_cache else ""
+    return f"User information{cache_note}: " + json.dumps(result.data)
+
+
+# =============================================================================
+# Health Database Management Tools
+# =============================================================================
+
+
+@mcp.tool()
+async def health_db_stats() -> str:
+    """Get statistics about the local health database.
+
+    Returns information about database size, record counts by type,
+    date ranges covered, and last sync time.
+    """
+    db = get_health_db()
+    stats = db.get_stats()
+    return "Health database statistics: " + json.dumps(stats, indent=2)
+
+
+@mcp.tool()
+async def health_db_export(
+    format: str = "json",
+    output_path: str | None = None,
+    include_metrics: bool = True,
+    include_workouts: bool = True,
+    include_sleep: bool = True,
+    include_locations: bool = True,
+) -> str:
+    """Export health database to a file.
+
+    Args:
+        format: Export format - "json" or "csv". Default is "json".
+        output_path: Optional path for the output file. If not provided, uses default location.
+        include_metrics: Include health metrics in export. Default True.
+        include_workouts: Include workout data in export. Default True.
+        include_sleep: Include sleep cycle data in export. Default True.
+        include_locations: Include location data in export. Default True.
+
+    Returns:
+        Summary of exported data and file path.
+    """
+    from pathlib import Path
+
+    db = get_health_db()
+
+    if not db.enabled:
+        return "Health database is not enabled. Set FULCRA_DB_ENABLED=true to enable."
+
+    # Determine output path
+    if output_path is None:
+        export_dir = Path.home() / ".fulcra_health_db" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = str(export_dir / f"health_export_{timestamp}.{format}")
+
+    if format.lower() == "csv":
+        count = db.export_metrics_csv(output_path)
+        return f"Exported {count} metric records to CSV: {output_path}"
+    else:
+        summary = db.export_json(
+            output_path,
+            include_metrics=include_metrics,
+            include_workouts=include_workouts,
+            include_sleep=include_sleep,
+            include_locations=include_locations,
+        )
+        return f"Exported health data to JSON: {output_path}\nSummary: " + json.dumps(summary)
+
+
+@mcp.tool()
+async def health_db_sync_range(
+    start_date: str,
+    end_date: str,
+    metric_name: str | None = None,
+) -> str:
+    """Proactively sync a date range to the local health database.
+
+    This is useful for downloading historical data (e.g., "sync all my 2025 data").
+    Data is fetched in chunks with automatic retry and progress tracking.
+
+    Args:
+        start_date: Start date in ISO format (e.g., "2025-01-01").
+        end_date: End date in ISO format (e.g., "2025-12-31").
+        metric_name: Optional specific metric to sync. If not provided, syncs heart_rate by default.
+
+    Returns:
+        Summary of the sync operation including progress and any failures.
+    """
+    from datetime import timezone
+
+    db = get_health_db()
+    fetcher = get_smart_fetcher()
+    fulcra = get_fulcra_object()
+
+    if not db.enabled:
+        return "Health database is not enabled. Set FULCRA_DB_ENABLED=true to enable."
+
+    # Parse dates
+    try:
+        start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+        end_dt = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        return f"Invalid date format: {e}. Use ISO format like '2025-01-01'."
+
+    # Default to heart_rate if no metric specified
+    metric = metric_name or "heart_rate"
+
+    result = await fetcher.sync_large_range(
+        fulcra_fetch_func=fulcra.metric_time_series,
+        metric_name=metric,
+        start_date=start_dt,
+        end_date=end_dt,
+    )
+
+    return f"Sync complete for {metric}: " + json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def health_db_clear(
+    confirm: bool = False,
+    older_than_days: int | None = None,
+    tables: list[str] | None = None,
+) -> str:
+    """Clear data from the local health database.
+
+    CAUTION: This permanently deletes data. Use with care.
+
+    Args:
+        confirm: Must be True to proceed with deletion. Safety check.
+        older_than_days: Optional. Only delete data older than this many days.
+        tables: Optional list of tables to clear. Options: "health_metrics", "workouts", "sleep_cycles", "locations".
+                If not provided, clears all tables.
+
+    Returns:
+        Summary of deleted records.
+    """
+    db = get_health_db()
+
+    if not db.enabled:
+        return "Health database is not enabled."
+
+    if not confirm:
+        return (
+            "Database clear requires confirmation. "
+            "Call with confirm=True to proceed. "
+            "This will permanently delete data from the local database."
+        )
+
+    result = db.clear(older_than_days=older_than_days, tables=tables)
+
+    if older_than_days:
+        return f"Cleared records older than {older_than_days} days: " + json.dumps(result)
+    else:
+        return "Cleared all records: " + json.dumps(result)
 
 
 mcp_asgi_app = mcp.http_app(path="/")
