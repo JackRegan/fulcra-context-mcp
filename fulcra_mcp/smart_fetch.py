@@ -117,19 +117,34 @@ def from_timestamp(ts: float) -> datetime:
 
 
 def _convert_timestamps_in_records(records: list[dict]) -> list[dict]:
-    """Convert any pandas Timestamp objects to ISO strings in records."""
+    """Convert pandas/numpy types to JSON-serializable Python types."""
+    import numpy as np
     import pandas as pd
+
+    def convert_value(value):
+        """Recursively convert a value to JSON-serializable type."""
+        if value is None:
+            return None
+        elif isinstance(value, pd.Timestamp):
+            return value.isoformat()
+        elif hasattr(value, "isoformat"):  # datetime-like objects
+            return value.isoformat()
+        elif isinstance(value, np.ndarray):
+            return value.tolist()
+        elif isinstance(value, (np.integer, np.floating)):
+            return value.item()  # Convert numpy scalar to Python scalar
+        elif isinstance(value, np.bool_):
+            return bool(value)
+        elif isinstance(value, dict):
+            return {k: convert_value(v) for k, v in value.items()}
+        elif isinstance(value, (list, tuple)):
+            return [convert_value(v) for v in value]
+        else:
+            return value
 
     converted = []
     for record in records:
-        new_record = {}
-        for key, value in record.items():
-            if isinstance(value, pd.Timestamp):
-                new_record[key] = value.isoformat()
-            elif hasattr(value, "isoformat"):  # datetime-like objects
-                new_record[key] = value.isoformat()
-            else:
-                new_record[key] = value
+        new_record = {key: convert_value(value) for key, value in record.items()}
         converted.append(new_record)
     return converted
 
