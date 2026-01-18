@@ -560,15 +560,27 @@ class HealthDatabase:
         records = []
 
         for workout in workouts:
+            # Get time values - skip if None
+            start_val = workout.get("start_time") or workout.get("startDate")
+            end_val = workout.get("end_time") or workout.get("endDate")
+
+            if start_val is None or end_val is None:
+                logger.warning(
+                    "Skipping workout with missing time data",
+                    has_start=start_val is not None,
+                    has_end=end_val is not None,
+                )
+                continue
+
             # Generate a unique ID if not provided
             workout_id = workout.get("id") or workout.get("workout_id")
             if not workout_id:
                 # Create hash from start time and type
-                hash_input = f"{workout.get('start_time')}-{workout.get('workout_type', 'unknown')}"
+                hash_input = f"{start_val}-{workout.get('workout_type', 'unknown')}"
                 workout_id = hashlib.md5(hash_input.encode()).hexdigest()[:16]
 
-            start_time = self.to_timestamp(workout.get("start_time") or workout.get("startDate"))
-            end_time = self.to_timestamp(workout.get("end_time") or workout.get("endDate"))
+            start_time = self.to_timestamp(start_val)
+            end_time = self.to_timestamp(end_val)
             workout_type = workout.get("workout_type") or workout.get("workoutActivityType")
 
             records.append(
@@ -581,6 +593,9 @@ class HealthDatabase:
                     now,
                 )
             )
+
+        if not records:
+            return 0
 
         with self._get_connection() as conn:
             cursor = conn.executemany(
@@ -655,13 +670,25 @@ class HealthDatabase:
         records = []
 
         for cycle in cycles:
+            # Get time values - skip if None
+            start_val = cycle.get("start_time") or cycle.get("startDate")
+            end_val = cycle.get("end_time") or cycle.get("endDate")
+
+            if start_val is None or end_val is None:
+                logger.warning(
+                    "Skipping sleep cycle with missing time data",
+                    has_start=start_val is not None,
+                    has_end=end_val is not None,
+                )
+                continue
+
             cycle_id = cycle.get("id") or cycle.get("cycle_id")
             if not cycle_id:
-                hash_input = f"{cycle.get('start_time')}-{cycle.get('end_time')}"
+                hash_input = f"{start_val}-{end_val}"
                 cycle_id = hashlib.md5(hash_input.encode()).hexdigest()[:16]
 
-            start_time = self.to_timestamp(cycle.get("start_time") or cycle.get("startDate"))
-            end_time = self.to_timestamp(cycle.get("end_time") or cycle.get("endDate"))
+            start_time = self.to_timestamp(start_val)
+            end_time = self.to_timestamp(end_val)
 
             records.append(
                 (
@@ -672,6 +699,9 @@ class HealthDatabase:
                     now,
                 )
             )
+
+        if not records:
+            return 0
 
         with self._get_connection() as conn:
             cursor = conn.executemany(

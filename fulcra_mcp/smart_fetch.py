@@ -116,6 +116,80 @@ def from_timestamp(ts: float) -> datetime:
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
+def _convert_timestamps_in_records(records: list[dict]) -> list[dict]:
+    """Convert any pandas Timestamp objects to ISO strings in records."""
+    import pandas as pd
+
+    converted = []
+    for record in records:
+        new_record = {}
+        for key, value in record.items():
+            if isinstance(value, pd.Timestamp):
+                new_record[key] = value.isoformat()
+            elif hasattr(value, "isoformat"):  # datetime-like objects
+                new_record[key] = value.isoformat()
+            else:
+                new_record[key] = value
+        converted.append(new_record)
+    return converted
+
+
+def _normalize_metric_records(records: list[dict]) -> list[dict]:
+    """
+    Normalize Fulcra API field names to our expected format.
+
+    Fulcra returns: {"start_date": "...", "end_date": "...", "value": ...}
+    We expect: {"timestamp": "...", "value": ...}
+    """
+    normalized = []
+    for record in records:
+        new_record = dict(record)  # Copy original
+
+        # Map start_date -> timestamp if timestamp doesn't exist
+        if "timestamp" not in new_record:
+            if "start_date" in new_record:
+                new_record["timestamp"] = new_record["start_date"]
+            elif "startDate" in new_record:
+                new_record["timestamp"] = new_record["startDate"]
+            elif "time" in new_record:
+                new_record["timestamp"] = new_record["time"]
+
+        normalized.append(new_record)
+    return normalized
+
+
+def _normalize_workout_records(records: list[dict]) -> list[dict]:
+    """Normalize workout records, filtering out invalid entries."""
+    valid = []
+    for record in records:
+        # Skip records without valid time data
+        start = record.get("start_time") or record.get("startDate")
+        end = record.get("end_time") or record.get("endDate")
+
+        if start is None or end is None:
+            logger.warning("Skipping workout with missing time data", record_keys=list(record.keys()))
+            continue
+
+        valid.append(record)
+    return valid
+
+
+def _normalize_sleep_records(records: list[dict]) -> list[dict]:
+    """Normalize sleep cycle records, filtering out invalid entries."""
+    valid = []
+    for record in records:
+        # Skip records without valid time data
+        start = record.get("start_time") or record.get("startDate")
+        end = record.get("end_time") or record.get("endDate")
+
+        if start is None or end is None:
+            logger.warning("Skipping sleep cycle with missing time data", record_keys=list(record.keys()))
+            continue
+
+        valid.append(record)
+    return valid
+
+
 def split_into_chunks(
     start_date: datetime,
     end_date: datetime,
@@ -300,9 +374,16 @@ class SmartFetcher:
 
                 # Convert DataFrame to list of dicts if needed
                 if hasattr(api_data, "to_dict"):
+                    # Use date_format="iso" to convert Timestamps to strings
                     records = api_data.to_dict(orient="records")
+                    # Convert any remaining Timestamp objects to ISO strings
+                    records = _convert_timestamps_in_records(records)
                 else:
                     records = api_data if isinstance(api_data, list) else [api_data]
+
+                # Map Fulcra field names to our expected format
+                # Fulcra uses "start_date" but we store as "timestamp"
+                records = _normalize_metric_records(records)
 
                 # Store in database
                 if is_recent:
@@ -395,7 +476,12 @@ class SmartFetcher:
 
         # Store in database
         workouts = api_data if isinstance(api_data, list) else [api_data]
-        self.db.insert_workouts(workouts)
+
+        # Filter out invalid workouts (missing time data)
+        workouts = _normalize_workout_records(workouts)
+
+        if workouts:
+            self.db.insert_workouts(workouts)
 
         # Log the fetch
         self.db.log_fetch(
@@ -461,8 +547,13 @@ class SmartFetcher:
         # Convert DataFrame to list if needed
         if hasattr(api_data, "to_dict"):
             cycles = api_data.to_dict(orient="records")
+            # Convert any pandas Timestamp objects to ISO strings
+            cycles = _convert_timestamps_in_records(cycles)
         else:
             cycles = api_data if isinstance(api_data, list) else [api_data]
+
+        # Filter out invalid sleep cycles (missing time data)
+        cycles = _normalize_sleep_records(cycles)
 
         # Store in database
         self.db.insert_sleep_cycles(cycles)
