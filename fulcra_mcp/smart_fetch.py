@@ -806,6 +806,32 @@ class SmartFetcher:
                     **kwargs,
                 )
 
+                # Validate we actually got data
+                if result.records_fetched == 0 and not result.from_cache:
+                    logger.warning(
+                        "Chunk returned no new data from API",
+                        job_id=job_id,
+                        chunk_start=chunk_start.isoformat(),
+                        chunk_end=chunk_end.isoformat(),
+                    )
+
+                # Verify database write succeeded if we fetched new data
+                if result.records_fetched > 0:
+                    verify_data = self.db.query_metrics(metric_name, chunk_start, chunk_end)
+                    if len(verify_data) == 0:
+                        logger.error(
+                            "Database write verification failed - no records found after insert",
+                            job_id=job_id,
+                            metric_name=metric_name,
+                            records_fetched=result.records_fetched,
+                        )
+                        progress.failed.append({
+                            "start": chunk_start.isoformat(),
+                            "end": chunk_end.isoformat(),
+                            "error": "Database write verification failed",
+                        })
+                        continue
+
                 progress.completed += 1
                 progress.last_success = chunk_end
 
@@ -815,6 +841,7 @@ class SmartFetcher:
                     progress=f"{progress.completed}/{progress.total_chunks}",
                     from_cache=result.from_cache,
                     records_fetched=result.records_fetched,
+                    records_in_db=len(verify_data) if result.records_fetched > 0 else "n/a",
                 )
 
                 # Respect rate limits between chunks

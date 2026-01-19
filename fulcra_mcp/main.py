@@ -47,9 +47,30 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Configure logging to stderr for ALL modes to avoid polluting stdout JSON-RPC stream
+logging.basicConfig(
+    format="%(message)s",
+    stream=sys.stderr,
+    level=logging.DEBUG if settings.fulcra_environment == "localdev" else logging.WARNING,
+)
+
+# Configure structlog to use stderr
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.dev.ConsoleRenderer(),
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    cache_logger_on_first_use=True,
+)
+
 logger = structlog.getLogger(__name__)
-if settings.fulcra_environment == "localdev":
-    logging.basicConfig(format="%(message)s", stream=sys.stderr, level=logging.DEBUG)
 
 
 class FulcraOAuthProvider(OAuthProvider):
@@ -407,7 +428,8 @@ async def get_metric_time_series(
     if hasattr(result.data, "to_json"):
         data_json = result.data.to_json(orient="records", date_format="iso", default_handler=str)
     else:
-        data_json = json.dumps(result.data)
+        # Use default=str to handle datetime objects
+        data_json = json.dumps(result.data, default=str)
 
     return f"Time series data for {metric_name} from {start_time} to {end_time}{cache_info}: " + data_json
 
@@ -426,6 +448,8 @@ async def get_metric_samples(
     Result timestamps will include time zones. Always translate timestamps to the user's local
     time zone when this is known.
 
+    Uses local health database for fast access. Only fetches from API for data gaps.
+
     Args:
         metric_name: The name of the metric to retrieve samples for. Use `get_metrics_catalog` to find available metrics.
         start_time: The start of the time range (inclusive), as an ISO 8601 string or datetime object.
@@ -434,14 +458,19 @@ async def get_metric_samples(
         A JSON string representing a list of raw samples for the metric.
     """
     fulcra = get_fulcra_object()
-    samples = fulcra.metric_samples(
-        metric=metric_name,
+    fetcher = get_smart_fetcher()
+
+    result = await fetcher.get_metric_time_series(
+        fulcra_fetch_func=fulcra.metric_samples,
+        metric_name=metric_name,
         start_time=start_time,
         end_time=end_time,
     )
+
+    cache_note = " (from local database)" if result.from_cache else ""
     return (
-        f"Raw samples for {metric_name} from {start_time} to {end_time}: "
-        + json.dumps(samples)
+        f"Raw samples for {metric_name} from {start_time} to {end_time}{cache_note}: "
+        + json.dumps(result.data, default=str)
     )
 
 
@@ -501,7 +530,8 @@ async def get_sleep_cycles(
     if hasattr(result.data, "to_json"):
         data_json = result.data.to_json(orient="records", date_format="iso", default_handler=str)
     else:
-        data_json = json.dumps(result.data)
+        # Use default=str to handle datetime objects
+        data_json = json.dumps(result.data, default=str)
 
     return f"Sleep cycles from {start_time} to {end_time}{cache_note}: " + data_json
 
