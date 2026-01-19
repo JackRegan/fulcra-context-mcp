@@ -154,7 +154,9 @@ def _normalize_metric_records(records: list[dict]) -> list[dict]:
     Normalize Fulcra API field names to our expected format.
 
     Fulcra returns: {"start_date": "...", "end_date": "...", "value": ...}
-    We expect: {"timestamp": "...", "value": ...}
+    We expect: {"timestamp": <float>, "value": ...}
+
+    Records without valid timestamps are filtered out.
     """
     normalized = []
     for record in records:
@@ -162,46 +164,111 @@ def _normalize_metric_records(records: list[dict]) -> list[dict]:
 
         # Map start_date -> timestamp if timestamp doesn't exist
         if "timestamp" not in new_record:
+            timestamp_value = None
             if "start_date" in new_record:
-                new_record["timestamp"] = new_record["start_date"]
+                timestamp_value = new_record["start_date"]
             elif "startDate" in new_record:
-                new_record["timestamp"] = new_record["startDate"]
+                timestamp_value = new_record["startDate"]
             elif "time" in new_record:
-                new_record["timestamp"] = new_record["time"]
+                timestamp_value = new_record["time"]
+
+            # Convert to float timestamp
+            if timestamp_value is not None:
+                new_record["timestamp"] = to_timestamp(timestamp_value)
+            else:
+                # Skip records without valid timestamps
+                logger.warning(
+                    "Skipping record without timestamp",
+                    record_keys=list(record.keys()),
+                    sample_values={k: str(v)[:50] for k, v in list(record.items())[:3]},
+                )
+                continue
+
+        # Also verify timestamp field exists and is not None
+        if "timestamp" not in new_record or new_record["timestamp"] is None:
+            logger.warning(
+                "Skipping record with None timestamp",
+                record_keys=list(record.keys()),
+            )
+            continue
 
         normalized.append(new_record)
     return normalized
 
 
 def _normalize_workout_records(records: list[dict]) -> list[dict]:
-    """Normalize workout records, filtering out invalid entries."""
+    """
+    Normalize workout records, filtering out invalid entries.
+
+    Converts start_date/end_date to start_time/end_time as float timestamps.
+    """
     valid = []
     for record in records:
-        # Skip records without valid time data
-        start = record.get("start_time") or record.get("startDate")
-        end = record.get("end_time") or record.get("endDate")
+        new_record = dict(record)  # Copy original
+
+        # Get start time from various possible field names
+        start = (
+            record.get("start_time")
+            or record.get("start_date")
+            or record.get("startTime")
+            or record.get("startDate")
+        )
+
+        # Get end time from various possible field names
+        end = (
+            record.get("end_time")
+            or record.get("end_date")
+            or record.get("endTime")
+            or record.get("endDate")
+        )
 
         if start is None or end is None:
             logger.warning("Skipping workout with missing time data", record_keys=list(record.keys()))
             continue
 
-        valid.append(record)
+        # Convert to float timestamps and set normalized field names
+        new_record["start_time"] = to_timestamp(start)
+        new_record["end_time"] = to_timestamp(end)
+
+        valid.append(new_record)
     return valid
 
 
 def _normalize_sleep_records(records: list[dict]) -> list[dict]:
-    """Normalize sleep cycle records, filtering out invalid entries."""
+    """
+    Normalize sleep cycle records, filtering out invalid entries.
+
+    Converts start_date/end_date to start_time/end_time as float timestamps.
+    """
     valid = []
     for record in records:
-        # Skip records without valid time data
-        start = record.get("start_time") or record.get("startDate")
-        end = record.get("end_time") or record.get("endDate")
+        new_record = dict(record)  # Copy original
+
+        # Get start time from various possible field names
+        start = (
+            record.get("start_time")
+            or record.get("start_date")
+            or record.get("startTime")
+            or record.get("startDate")
+        )
+
+        # Get end time from various possible field names
+        end = (
+            record.get("end_time")
+            or record.get("end_date")
+            or record.get("endTime")
+            or record.get("endDate")
+        )
 
         if start is None or end is None:
             logger.warning("Skipping sleep cycle with missing time data", record_keys=list(record.keys()))
             continue
 
-        valid.append(record)
+        # Convert to float timestamps and set normalized field names
+        new_record["start_time"] = to_timestamp(start)
+        new_record["end_time"] = to_timestamp(end)
+
+        valid.append(new_record)
     return valid
 
 
@@ -366,8 +433,16 @@ class SmartFetcher:
         # Identify gaps in local data
         gaps = self.db.identify_gaps(metric_name, start_time, end_time)
 
+        logger.info(
+            "DEBUG: Gaps identified",
+            metric_name=metric_name,
+            gaps_count=len(gaps),
+            gaps=[(g.start_time, g.end_time) for g in gaps] if gaps else "no gaps",
+        )
+
         records_fetched = 0
         gaps_fetched = 0
+        all_fetched_records = []  # Accumulate all fetched records
 
         # Fetch data for each gap
         for gap in gaps:
@@ -387,26 +462,60 @@ class SmartFetcher:
                     **kwargs,
                 )
 
+                logger.info(
+                    "DEBUG: API fetch completed",
+                    metric_name=metric_name,
+                    api_data_type=type(api_data).__name__,
+                    is_dataframe=hasattr(api_data, "to_dict"),
+                    is_list=isinstance(api_data, list),
+                )
+
                 # Convert DataFrame to list of dicts if needed
                 if hasattr(api_data, "to_dict"):
                     # Use date_format="iso" to convert Timestamps to strings
                     records = api_data.to_dict(orient="records")
                     # Convert any remaining Timestamp objects to ISO strings
                     records = _convert_timestamps_in_records(records)
+                    logger.info(
+                        "DEBUG: DataFrame converted to records",
+                        records_count=len(records),
+                        sample_record=records[0] if records else None,
+                    )
                 else:
                     records = api_data if isinstance(api_data, list) else [api_data]
+                    logger.info(
+                        "DEBUG: Using API data directly",
+                        records_count=len(records) if isinstance(records, list) else 1,
+                    )
 
                 # Map Fulcra field names to our expected format
                 # Fulcra uses "start_date" but we store as "timestamp"
                 records = _normalize_metric_records(records)
 
+                logger.info(
+                    "DEBUG: Records normalized",
+                    records_count=len(records),
+                    sample_keys=list(records[0].keys()) if records else [],
+                    sample_record=records[0] if records else None,
+                )
+
                 # Store in database
                 if is_recent:
                     # Recent data - use upsert in case it changes
-                    self.db.upsert_metrics(metric_name, records)
+                    inserted_count = self.db.upsert_metrics(metric_name, records)
+                    logger.info(
+                        "DEBUG: Upserted metrics to database",
+                        attempted=len(records),
+                        upserted=inserted_count,
+                    )
                 else:
                     # Historical data - insert only
-                    self.db.insert_metrics(metric_name, records)
+                    inserted_count = self.db.insert_metrics(metric_name, records)
+                    logger.info(
+                        "DEBUG: Inserted metrics to database",
+                        attempted=len(records),
+                        inserted=inserted_count,
+                    )
 
                 # Log the fetch
                 self.db.log_fetch(
@@ -417,6 +526,8 @@ class SmartFetcher:
                     record_count=len(records),
                 )
 
+                # Track fetched records
+                all_fetched_records.extend(records)
                 records_fetched += len(records)
                 gaps_fetched += 1
 
@@ -444,16 +555,29 @@ class SmartFetcher:
                 # Continue with other gaps
                 continue
 
-        # Query all data from local database
-        local_data = self.db.query_metrics(metric_name, start_time, end_time)
+        # If we fetched data, combine with any cached data and return
+        if gaps_fetched > 0:
+            # Query database to get complete dataset (cached + just inserted)
+            local_data = self.db.query_metrics(metric_name, start_time, end_time)
 
-        return FetchResult(
-            data=local_data,
-            from_cache=gaps_fetched == 0,
-            gaps_fetched=gaps_fetched,
-            records_fetched=records_fetched,
-            records_from_cache=len(local_data) - records_fetched,
-        )
+            return FetchResult(
+                data=local_data if local_data else all_fetched_records,  # Fallback to fetched if query fails
+                from_cache=False,
+                gaps_fetched=gaps_fetched,
+                records_fetched=records_fetched,
+                records_from_cache=len(local_data) - records_fetched if local_data else 0,
+            )
+        else:
+            # No gaps, all data from cache
+            local_data = self.db.query_metrics(metric_name, start_time, end_time)
+
+            return FetchResult(
+                data=local_data,
+                from_cache=True,
+                gaps_fetched=0,
+                records_fetched=0,
+                records_from_cache=len(local_data),
+            )
 
     async def get_workouts(
         self,
