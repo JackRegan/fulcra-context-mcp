@@ -32,6 +32,42 @@ from pydantic_settings import BaseSettings
 from .health_db import get_health_db
 from .smart_fetch import get_smart_fetcher
 
+"""
+Fulcra Context MCP Server - Personal Health Data Warehouse
+
+This module implements an MCP (Model Context Protocol) server that provides access to
+Fulcra health and activity data through a local SQLite database warehouse with intelligent
+caching and gap detection.
+
+Architecture:
+    - FastMCP: Handles MCP protocol communication with clients (Claude Desktop, etc.)
+    - OAuth Provider: Manages Fulcra API authentication via OAuth/OIDC
+    - SmartFetcher: Intelligent caching layer with gap detection
+    - HealthDatabase: SQLite-based permanent storage for health data
+    - Fulcra API: Upstream data source for health metrics
+
+Key Features:
+    - Local-first data access with minimal API calls
+    - Smart gap detection (only fetch missing data)
+    - Permanent storage (fetch once, store forever)
+    - 8 data retrieval tools + 4 database management tools
+    - OAuth authentication with token refresh
+    - Error recovery and retry logic
+
+Environment Modes:
+    - stdio: MCP communication over stdin/stdout (for Claude Desktop)
+    - http: FastAPI server with OAuth callback (for remote MCP clients)
+
+Environment Variables:
+    - FULCRA_ENVIRONMENT: "stdio" (default) or "http"
+    - FULCRA_CLIENT_ID: OAuth client ID (http mode)
+    - FULCRA_CLIENT_SECRET: OAuth client secret (http mode)
+    - FULCRA_DB_ENABLED: Enable local database (default: true)
+    - FULCRA_DB_PATH: Path to SQLite database (default: ~/.fulcra_health_db)
+
+See README.md and ARCHITECTURE.md for detailed documentation.
+"""
+
 OIDC_SCOPES = ["openid", "profile", "name", "email"]
 
 
@@ -345,7 +381,9 @@ async def get_workouts(start_time: datetime, end_time: datetime) -> str:
     )
 
     cache_note = " (from local database)" if result.from_cache else ""
-    return f"Workouts during {start_time} and {end_time}{cache_note}: " + json.dumps(result.data)
+    start_str = start_time.isoformat() if hasattr(start_time, 'isoformat') else str(start_time)
+    end_str = end_time.isoformat() if hasattr(end_time, 'isoformat') else str(end_time)
+    return f"Workouts during {start_str} and {end_str}{cache_note}: " + json.dumps(result.data)
 
 
 @mcp.tool()
@@ -431,7 +469,10 @@ async def get_metric_time_series(
         # Use default=str to handle datetime objects
         data_json = json.dumps(result.data, default=str)
 
-    return f"Time series data for {metric_name} from {start_time} to {end_time}{cache_info}: " + data_json
+    # Convert datetime objects to strings for the message
+    start_str = start_time.isoformat() if hasattr(start_time, 'isoformat') else str(start_time)
+    end_str = end_time.isoformat() if hasattr(end_time, 'isoformat') else str(end_time)
+    return f"Time series data for {metric_name} from {start_str} to {end_str}{cache_info}: " + data_json
 
 
 @mcp.tool()
@@ -533,7 +574,11 @@ async def get_sleep_cycles(
         # Use default=str to handle datetime objects
         data_json = json.dumps(result.data, default=str)
 
-    return f"Sleep cycles from {start_time} to {end_time}{cache_note}: " + data_json
+    # Convert datetime objects to strings for the message
+    start_str = start_time.isoformat() if hasattr(start_time, 'isoformat') else str(start_time)
+    end_str = end_time.isoformat() if hasattr(end_time, 'isoformat') else str(end_time)
+
+    return f"Sleep cycles from {start_str} to {end_str}{cache_note}: " + data_json
 
 
 @mcp.tool()
@@ -621,7 +666,10 @@ async def get_location_time_series(
     )
 
     cache_note = " (from local database)" if result.from_cache else ""
-    return f"Location time series from {start_time} to {end_time}{cache_note}: " + json.dumps(result.data)
+    # Convert datetime objects to strings for the message
+    start_str = start_time.isoformat() if hasattr(start_time, 'isoformat') else str(start_time)
+    end_str = end_time.isoformat() if hasattr(end_time, 'isoformat') else str(end_time)
+    return f"Location time series from {start_str} to {end_str}{cache_note}: " + json.dumps(result.data)
 
 
 @mcp.tool()

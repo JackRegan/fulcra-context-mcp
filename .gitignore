@@ -5,15 +5,64 @@ build/
 dist/
 wheels/
 *.egg-info
+*.egg
 
 # Virtual environments
-.venv
-.*.sw?
-.aider*
-.mypy_cache
-.DS_Store
-.env
-.direnv
-.venv
+.venv/
+venv/
+ENV/
+env/
 
+# IDE and editor files
+.vscode/
+.idea/
+*.sw?
+.aider*
+.DS_Store
+
+# Environment and secrets
+.env
+.envrc
+*.pem
+*.key
+
+# Package managers
+.direnv/
+
+# Type checking and linting
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# SQLite databases (health data should not be in repo)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# State and logs
+state/
+*.log
+*.log.*
+
+# Temporary files
+*.tmp
+*.bak
+*~
+.#*
+
+# Claude plans (local planning files)
+.claude/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
