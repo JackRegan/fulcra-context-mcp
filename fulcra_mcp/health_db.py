@@ -307,14 +307,14 @@ class HealthDatabase:
             # Handle complex values (store as JSON)
             value_json = None
             if isinstance(value, (dict, list)):
-                value_json = json.dumps(value)
+                value_json = json.dumps(value, default=str)
                 value = None
 
             # Store any extra fields as metadata
             extra_fields = {
                 k: v for k, v in point.items() if k not in (timestamp_field, value_field)
             }
-            metadata = json.dumps(extra_fields) if extra_fields else None
+            metadata = json.dumps(extra_fields, default=str) if extra_fields else None
 
             records.append((metric_name, ts, value, value_json, now, metadata))
 
@@ -368,13 +368,13 @@ class HealthDatabase:
 
             value_json = None
             if isinstance(value, (dict, list)):
-                value_json = json.dumps(value)
+                value_json = json.dumps(value, default=str)
                 value = None
 
             extra_fields = {
                 k: v for k, v in point.items() if k not in (timestamp_field, value_field)
             }
-            metadata = json.dumps(extra_fields) if extra_fields else None
+            metadata = json.dumps(extra_fields, default=str) if extra_fields else None
 
             records.append((metric_name, ts, value, value_json, now, metadata))
 
@@ -589,7 +589,7 @@ class HealthDatabase:
                     start_time,
                     end_time,
                     workout_type,
-                    json.dumps(workout),
+                    json.dumps(workout, default=str),  # Use default=str to handle datetime objects
                     now,
                 )
             )
@@ -695,7 +695,7 @@ class HealthDatabase:
                     cycle_id,
                     start_time,
                     end_time,
-                    json.dumps(cycle),
+                    json.dumps(cycle, default=str),  # Use default=str to handle datetime objects
                     now,
                 )
             )
@@ -761,7 +761,7 @@ class HealthDatabase:
                     lat,
                     lon,
                     accuracy,
-                    json.dumps(loc),
+                    json.dumps(loc, default=str),
                     now,
                 )
             )
@@ -896,7 +896,7 @@ class HealthDatabase:
                     (key, value, fetched_at, expires_at)
                 VALUES (?, ?, ?, ?)
             """,
-                (key, json.dumps(value), now, expires_at),
+                (key, json.dumps(value, default=str), now, expires_at),
             )
 
     # =========================================================================
@@ -925,7 +925,7 @@ class HealthDatabase:
                     (tool_name, query_params, start_time, end_time, fetched_at, record_count)
                 VALUES (?, ?, ?, ?, ?, ?)
             """,
-                (tool_name, json.dumps(query_params), start_ts, end_ts, time.time(), record_count),
+                (tool_name, json.dumps(query_params, default=str), start_ts, end_ts, time.time(), record_count),
             )
 
     def was_range_fetched(
@@ -979,7 +979,7 @@ class HealthDatabase:
                     time.time(),
                     error_type,
                     error_message,
-                    json.dumps(context) if context else None,
+                    json.dumps(context, default=str) if context else None,
                 ),
             )
 
@@ -1296,13 +1296,13 @@ class HealthDatabase:
 
                 value_json = None
                 if isinstance(value, (dict, list)):
-                    value_json = json.dumps(value)
+                    value_json = json.dumps(value, default=str)
                     value = None
 
                 extra_fields = {
                     k: v for k, v in point.items() if k not in (timestamp_field, value_field)
                 }
-                metadata = json.dumps(extra_fields) if extra_fields else None
+                metadata = json.dumps(extra_fields, default=str) if extra_fields else None
 
                 metric_records.append((metric_name, ts, value, value_json, now, metadata))
 
