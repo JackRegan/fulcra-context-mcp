@@ -1,32 +1,59 @@
-# fulcra-context-mcp: Local MCP Server for Fulcra Context Data
+# Fulcra Context MCP: Personal Health Data Warehouse
 
-> **Note:** This is a fork of [fulcradynamics/fulcra-context-mcp](https://github.com/fulcradynamics/fulcra-context-mcp) customized for local development with enhanced caching capabilities.
-> 
-> Full credit to the Fulcra team for the original implementation. For the official version and documentation, visit [Fulcra's developer docs](https://fulcradynamics.github.io/developer-docs/mcp-server/).
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![MCP](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
+
+> **Note:** This is a fork of [fulcradynamics/fulcra-context-mcp](https://github.com/fulcradynamics/fulcra-context-mcp) with significant enhancements for local data warehousing.
+>
+> Full credit to the Fulcra team for the original implementation. For the official version, visit [Fulcra's developer docs](https://fulcradynamics.github.io/developer-docs/mcp-server/).
 
 ## Overview
 
-This MCP server provides tools to access your Fulcra Context health and activity data through the Fulcra API using [`fulcra-api`](https://github.com/fulcradynamics/fulcra-api-python).
+Transform your health data from an API dependency into a **personal data warehouse**. This MCP server provides intelligent local caching with SQLite, smart gap detection, and permanent storage of your Fulcra health data.
 
-**Key Features:**
-- Access health metrics (sleep, workouts, heart rate, etc.)
-- Query location and activity data
-- Time-series data analysis
-- Local caching for improved performance (planned)
-- Privacy-focused local execution
+### Why This Fork?
+
+**Official MCP**: Simple API wrapper, queries Fulcra on every request
+
+**This Fork**: Personal health database with:
+- ✅ **Local SQLite database** - Permanent storage, not temporary cache
+- ✅ **Smart gap detection** - Only fetch missing data, minimize API calls
+- ✅ **Offline access** - Query your health data without internet
+- ✅ **10-100x faster** - Local queries vs. API calls
+- ✅ **Data ownership** - Your data stays on your machine
+- ✅ **Export tools** - CSV, JSON for external analysis
+
+### Key Features
+
+- **8 MCP Tools**: Access metrics, workouts, sleep, location data
+- **Intelligent Caching**: Fetch once, store forever (immutable data philosophy)
+- **Gap Detection Algorithm**: Automatically identifies missing time ranges
+- **Error Recovery**: Chunked requests, automatic retry, progress tracking
+- **Database Management**: Stats, export, sync, clear operations
+- **Privacy-Focused**: All data stored locally, no cloud dependencies
+
+📖 **[Read the Architecture Guide](ARCHITECTURE.md)** to understand how it works
 
 ## Available Tools
 
-The MCP server provides the following tools:
+### Data Retrieval Tools
 
-- `get_user_info` - Get user profile and preferences
-- `get_metrics_catalog` - List all available metrics
-- `get_metric_time_series` - Get time-series data for a metric
-- `get_metric_samples` - Get raw samples for a metric
-- `get_workouts` - Retrieve workout data for a time period
-- `get_sleep_cycles` - Get detailed sleep cycle information
-- `get_location_at_time` - Get location at a specific time
-- `get_location_time_series` - Get location data over time
+- `get_user_info` - User profile and preferences
+- `get_metrics_catalog` - List all available biometric metrics
+- `get_metric_time_series` - Time-series data for any metric (with smart caching)
+- `get_metric_samples` - Raw samples for detailed analysis
+- `get_workouts` - Workout sessions with full statistics
+- `get_sleep_cycles` - Sleep data with stages and quality metrics
+- `get_location_at_time` - GPS location at specific timestamp
+- `get_location_time_series` - Location history over time
+
+### Database Management Tools (New!)
+
+- `health_db_stats` - View database size, record counts, coverage
+- `health_db_export` - Export data to CSV or JSON
+- `health_db_sync_range` - Proactively sync large date ranges
+- `health_db_clear` - Clear database (with confirmation)
 
 ## Setup
 
@@ -109,44 +136,135 @@ uv run python -m fulcra_mcp.main
 npx @modelcontextprotocol/inspector uv run --directory /path/to/fulcra-context-mcp python -m fulcra_mcp.main
 ```
 
-## Development Roadmap
+## Testing
 
-This fork is actively being developed to transform from a simple API wrapper into a **personal health data warehouse**.
+The project includes comprehensive functional tests to validate JSON serialization, database operations, and API integration.
 
-**Planned Features:**
+### Quick Start
 
-- **Personal Health Database**: SQLite-based permanent storage for:
-  - Immutable health data (fetch once, store forever)
-  - Smart gap detection (only fetch missing data)
-  - Offline access to all historical data
-  - Fast local queries (100x faster than API)
-  - Export capabilities (CSV, JSON)
-  - Better privacy (data stays local)
+```bash
+# Install test dependencies
+pip install -e .[test]
 
-- **Robust Error Handling**:
-  - Chunked requests for large date ranges
-  - Automatic retry with exponential backoff
-  - Authentication token refresh
-  - Progress tracking and resume capability
-  - User-friendly error messages
+# Run all tests
+python -m fulcra_mcp.test_runner
 
-- **Advanced Features**:
-  - Data export for analysis tools (Pandas, R, Excel)
-  - Database management tools
-  - Query optimization
-  - Extended metrics and aggregations
+# Run specific test category
+python -m fulcra_mcp.test_runner --test serialization
 
-**See [CLAUDE.md](./CLAUDE.md) for the complete implementation plan.**
+# Run with verbose output
+python -m fulcra_mcp.test_runner --verbose
 
-## Example Usage
+# List available test categories
+python -m fulcra_mcp.test_runner --list
+```
 
-Once configured in Claude Desktop, you can ask:
+### Test Categories
 
-- "Show me last night's sleep data"
-- "What workouts did I do this week?"
-- "What was my heart rate during my run yesterday?"
-- "Where was I at 3pm on Tuesday?"
-- "Show me my step count trend for the past month"
+- **serialization** - Tests numpy array/scalar conversion, datetime handling, and JSON serialization
+- **database** - Tests CRUD operations for metrics, workouts, sleep, and location data
+- **gaps** - Tests smart fetch gap detection and data filling scenarios
+- **export** - Tests CSV and JSON export functionality
+- **stats** - Tests database statistics and management operations
+- **all** - Runs the complete test suite (default)
+
+### Using Pytest Directly
+
+```bash
+# Run all tests with pytest
+pytest fulcra_mcp/tests/ -v
+
+# Run specific test file
+pytest fulcra_mcp/tests/test_serialization.py -v
+
+# Run with detailed logging
+pytest fulcra_mcp/tests/ -v -s --log-cli-level=DEBUG
+
+# Run tests excluding slow integration tests
+pytest fulcra_mcp/tests/ -v -m "not slow"
+```
+
+### Test Database
+
+Tests use an isolated database at `~/.fulcra_health_db/test_fulcra_health.db` which is automatically cleaned up after tests. To preserve the test database for debugging:
+
+```bash
+python -m fulcra_mcp.test_runner --keep-db
+```
+
+### Requirements for Integration Tests
+
+Some tests require real Fulcra API access:
+- Valid Fulcra account with active subscription
+- OAuth authentication completed
+- Internet connection
+- Environment variable `FULCRA_API` set to the API endpoint
+
+Integration tests are marked with `@pytest.mark.integration` and can be skipped:
+
+```bash
+pytest fulcra_mcp/tests/ -v -m "not integration"
+```
+
+### What the Tests Validate
+
+1. **JSON Serialization** - Ensures all data types (numpy arrays, datetime objects, nested JSON) serialize correctly
+2. **Database Operations** - Verifies insert, query, upsert, and deletion operations work correctly
+3. **Smart Fetch Gap Detection** - Tests that missing data ranges are identified and fetched efficiently
+4. **Metadata Caching** - Validates TTL-based caching for user info and metrics catalog
+5. **Export Functionality** - Ensures CSV and JSON exports produce valid output
+6. **Error Handling** - Tests graceful handling of edge cases and invalid inputs
+
+### Known Issues Being Tested
+
+Recent bug fixes validated by these tests:
+- ✅ Numpy arrays convert to Python lists
+- ✅ Numpy scalars convert to Python floats/ints
+- ✅ Datetime objects serialize to ISO8601 strings
+- ✅ Fulcra field names (`start_date`) map correctly to database schema (`timestamp`)
+- ✅ None values handled without errors
+- ✅ `get_metric_samples` routed through smart fetcher for caching
+
+### Test Coverage
+
+Current test coverage includes:
+- 12 test classes
+- 50+ individual test cases
+- All 8 MCP tools
+- All 4 database data types (metrics, workouts, sleep, locations)
+- Multiple gap detection scenarios
+- Export and database management operations
+
+## Quick Start
+
+After installation (see [Setup](#setup) below):
+
+1. **First-time authentication**:
+   ```
+   Ask Claude: "Access my Fulcra health data"
+   # OAuth flow opens in browser
+   ```
+
+2. **Query your data**:
+   ```
+   "Show me last night's sleep data"
+   "What workouts did I do this week?"
+   "What was my heart rate during yesterday's run?"
+   ```
+
+3. **Manage your database**:
+   ```
+   "Show me my health database stats"
+   "Export my 2025 data to CSV"
+   "Download all my heart rate data from January"
+   ```
+
+## Documentation
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design, database schema, smart fetch algorithm
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and recent fixes
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup, testing, code style
+- **[LICENSE](LICENSE)** - Apache 2.0 license
 
 ## Troubleshooting
 
@@ -165,15 +283,19 @@ Once configured in Claude Desktop, you can ask:
 - Check that metrics are enabled in your Fulcra preferences
 - Review Claude Desktop logs for error messages
 
-## Support
+## Support & Contributing
 
-For issues specific to this fork:
-- Open an issue on this repository
+### This Fork
 
-For general Fulcra MCP questions:
-- [Official GitHub Repository](https://github.com/fulcradynamics/fulcra-context-mcp)
-- [Fulcra Discord](https://discord.com/invite/aunahVEnPU)
-- Email: support@fulcradynamics.com
+- **Issues**: [GitHub Issues](https://github.com/paulregan/fulcra-context-mcp/issues)
+- **Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Changelog**: See [CHANGELOG.md](CHANGELOG.md)
+
+### Upstream (Official Fulcra MCP)
+
+- **Repository**: [fulcradynamics/fulcra-context-mcp](https://github.com/fulcradynamics/fulcra-context-mcp)
+- **Discord**: [Fulcra Community](https://discord.com/invite/aunahVEnPU)
+- **Email**: support@fulcradynamics.com
 
 ## License
 
