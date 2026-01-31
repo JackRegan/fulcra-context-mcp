@@ -130,6 +130,55 @@ class FulcraOAuthProvider(OAuthProvider):
         self.tokens: dict[str, AccessToken] = {}
         self.state_mapping: dict[str, dict[str, str]] = {}
         self.token_mapping: dict[str, str] = {}
+        self._tokens_file = settings.state_path / "tokens.json"
+        self._load_tokens()
+
+    def _save_tokens(self):
+        """Persist tokens and token_mapping to disk."""
+        try:
+            data = {
+                "tokens": {
+                    k: {
+                        "token": v.token,
+                        "client_id": v.client_id,
+                        "scopes": v.scopes,
+                        "expires_at": v.expires_at,
+                    }
+                    for k, v in self.tokens.items()
+                },
+                "token_mapping": self.token_mapping,
+            }
+            self._tokens_file.parent.mkdir(parents=True, exist_ok=True)
+            with self._tokens_file.open("w") as f:
+                json.dump(data, f)
+        except Exception as exc:
+            logger.error("Failed to save tokens", exc_info=exc)
+
+    def _load_tokens(self):
+        """Load persisted tokens from disk, discarding expired ones."""
+        try:
+            if not self._tokens_file.exists():
+                return
+            with self._tokens_file.open("r") as f:
+                data = json.load(f)
+            now = time.time()
+            for k, v in data.get("tokens", {}).items():
+                if v.get("expires_at") and v["expires_at"] < now:
+                    continue
+                self.tokens[k] = AccessToken(
+                    token=v["token"],
+                    client_id=v["client_id"],
+                    scopes=v["scopes"],
+                    expires_at=v.get("expires_at"),
+                )
+            self.token_mapping = data.get("token_mapping", {})
+            # Remove mappings for expired/missing tokens
+            self.token_mapping = {
+                k: v for k, v in self.token_mapping.items() if k in self.tokens
+            }
+            logger.info(f"Loaded {len(self.tokens)} persisted tokens")
+        except Exception as exc:
+            logger.error("Failed to load tokens", exc_info=exc)
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         """Get OAuth client information."""
@@ -231,6 +280,7 @@ class FulcraOAuthProvider(OAuthProvider):
             raise HTTPException(400, "failed to exchange code for token")
 
         del self.state_mapping[state]
+        self._save_tokens()
         return construct_redirect_uri(redirect_uri, code=new_code, state=state)
 
     async def load_authorization_code(
@@ -253,7 +303,7 @@ class FulcraOAuthProvider(OAuthProvider):
             token=mcp_token,
             client_id=client.client_id,
             scopes=authorization_code.scopes,
-            expires_at=int(time.time()) + 3600,
+            expires_at=int(time.time()) + 604800,
         )
 
         # Find GitHub token for this client
@@ -272,11 +322,12 @@ class FulcraOAuthProvider(OAuthProvider):
             self.token_mapping[mcp_token] = oidc_token
 
         del self.auth_codes[authorization_code.code]
+        self._save_tokens()
 
         return OAuthToken(
             access_token=mcp_token,
             token_type="bearer",
-            expires_in=3600,
+            expires_in=604800,
             scope=" ".join(authorization_code.scopes),
         )
 
@@ -289,6 +340,7 @@ class FulcraOAuthProvider(OAuthProvider):
         # Check if expired
         if access_token.expires_at and access_token.expires_at < time.time():
             del self.tokens[token]
+            self._save_tokens()
             return None
 
         return access_token
@@ -314,6 +366,7 @@ class FulcraOAuthProvider(OAuthProvider):
         """Revoke a token."""
         if token in self.tokens:
             del self.tokens[token]
+            self._save_tokens()
 
 
 oauth_provider = FulcraOAuthProvider(
