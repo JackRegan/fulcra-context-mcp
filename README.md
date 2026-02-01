@@ -23,6 +23,7 @@ Transform your health data from an API dependency into a **personal data warehou
 - ✅ **10-100x faster** - Local queries vs. API calls
 - ✅ **Data ownership** - Your data stays on your machine
 - ✅ **Export tools** - CSV, JSON for external analysis
+- ✅ **Persistent auth tokens** - Survive server restarts, 7-day expiry
 
 ### Key Features
 
@@ -275,8 +276,10 @@ After installation (see [Setup](#setup) below):
 
 **Authentication issues:**
 - The first time you use the server, Fulcra will open a browser for OAuth
+- After authenticating, tokens are persisted to `state/tokens.json` and survive server restarts (7-day expiry)
 - Ensure you have an active Fulcra subscription
 - Check that `FULCRA_ENVIRONMENT=stdio` is set in the config
+- If tokens expire, delete `state/tokens.json` and re-authenticate
 
 **Data not loading:**
 - Verify your Fulcra account has data for the requested time period
